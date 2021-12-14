@@ -5,6 +5,9 @@ from pyModeS.extra.tcpclient import TcpClient
 import geopy.distance
 import paho.mqtt.client as mqtt
 import json
+from numpy import arctan2,random,sin,cos,degrees
+import numpy
+import math
 
 class ADSBClient(TcpClient):
     def __init__(self, host, port, rawtype):
@@ -13,15 +16,32 @@ class ADSBClient(TcpClient):
         self.qth = [51.973357353305914,5.669655084220917]
         self.localAirspace = [] 
         self.mqtt = mqtt.Client()
-        self.mqtt.connect("10.208.11.32",1883)
         super(ADSBClient, self).__init__(host, port, rawtype)
 
+    def calculate_initial_compass_bearing(self, pointA, pointB):
+        if (type(pointA) != tuple) or (type(pointB) != tuple):
+            raise TypeError("Only tuples are supported as arguments")
+        lat1 = math.radians(pointA[0])
+        lat2 = math.radians(pointB[0])
+        diffLong = math.radians(pointB[1] - pointA[1])
+        x = math.sin(diffLong) * math.cos(lat2)
+        y = math.cos(lat1) * math.sin(lat2) - (math.sin(lat1)
+                * math.cos(lat2) * math.cos(diffLong))
+        initial_bearing = math.atan2(x, y)
+        initial_bearing = math.degrees(initial_bearing)
+        compass_bearing = (initial_bearing + 360) % 360
+        return compass_bearing
+
     def handle_planet_entry(self, icao):
+        self.mqtt.connect("10.208.11.32",1883)
         self.mqtt.publish("space/planes/geozone/enter", json.dumps(self.PTDB[icao]))
-        print(self.PTDB[icao]['callsign'], "Entered our airspace")
+        self.mqtt.disconnect()
+        print(self.PTDB[icao]['callsign'], "Entered our airspace", json.dumps(self.PTDB[icao]))
 
     def handle_planet_exit(self, icao):
+        self.mqtt.connect("10.208.11.32",1883)
         self.mqtt.publish("space/planes/geozone/exit", json.dumps(self.PTDB[icao]))
+        self.mqtt.disconnect()
         print(self.PTDB[icao]['callsign'], "Exited our airspace")
 
     def handle_cleanup(self, ts):
@@ -49,7 +69,10 @@ class ADSBClient(TcpClient):
                     "distance":0,
                     "timestamp":0,
                     "airspace": 0,
-                    "entered":0
+                    "entered":0,
+                    "distance":0,
+                    "speed":0,
+                    "heading":0,
                     }
         if icao not in self.msgCache:
             self.msgCache[icao] = {
@@ -66,6 +89,11 @@ class ADSBClient(TcpClient):
         if tc>=1 and tc<=4:
             self.PTDB[icao]['callsign'] = pms.adsb.callsign(msg).strip("_")
             self.PTDB[icao]['category'] = pms.adsb.category(msg)
+
+        if (tc==19):
+            speed_heading = pms.adsb.speed_heading(msg)
+            self.PTDB[icao]['speed'] = speed_heading[0]
+            self.PTDB[icao]['heading'] = speed_heading[1] 
 
         # Typecode 5-8 (surface), 9-18 (airborne, barometric height), and 20-22 (airborne, GNSS height)
         if (tc>=5 and tc<=8) or (tc>=9 and tc<=18) or (tc>=20 and tc<=22):
@@ -88,14 +116,13 @@ class ADSBClient(TcpClient):
                 self.PTDB[icao]['lat'] = pos[0]
                 self.PTDB[icao]['lon'] = pos[1]
                 self.PTDB[icao]['distance'] = geopy.distance.geodesic(self.qth, pos).km
-                #if self.PTDB[icao]['alt'] < 20000 and self.PTDB[icao]['distance'] < 10:
-            if (self.PTDB[icao]['distance'] < 10 
-                    and self.PTDB[icao]['alt'] < 2000000
+                self.PTDB[icao]['bearing'] = self.calculate_initial_compass_bearing(tuple(self.qth), tuple(pos))
+            if (self.PTDB[icao]['distance'] < 50 
+                    #and self.PTDB[icao]['alt'] < 200000
                     and self.PTDB[icao]['callsign'] != ""
                     and self.PTDB[icao]['lat'] != 0
                     and self.PTDB[icao]['lon'] != 0
                     ):
-                print(len(self.PTDB.items()), self.PTDB)
                 if icao not in self.localAirspace:
                     self.PTDB[icao]['airspace'] = 1
                     self.PTDB[icao]['entered'] = time.time()
