@@ -16,6 +16,8 @@ class ADSBClient(TcpClient):
         self.qth = [51.973357353305914,5.669655084220917]
         self.localAirspace = [] 
         self.mqtt = mqtt.Client()
+        self.mqtt.connect("10.208.11.32",1883)
+        self.mqtt.loop_start()
         super(ADSBClient, self).__init__(host, port, rawtype)
 
     def calculate_initial_compass_bearing(self, pointA, pointB):
@@ -32,16 +34,15 @@ class ADSBClient(TcpClient):
         compass_bearing = (initial_bearing + 360) % 360
         return compass_bearing
 
-    def handle_planet_entry(self, icao):
-        self.mqtt.connect("10.208.11.32",1883)
+    def handle_plane_update(self, icao):
+        self.mqtt.publish("space/planes/update", json.dumps(self.PTDB[icao]))
+
+    def handle_plane_entry(self, icao):
         self.mqtt.publish("space/planes/geozone/enter", json.dumps(self.PTDB[icao]))
-        self.mqtt.disconnect()
         print(self.PTDB[icao]['callsign'], "Entered our airspace", json.dumps(self.PTDB[icao]))
 
-    def handle_planet_exit(self, icao):
-        self.mqtt.connect("10.208.11.32",1883)
+    def handle_plane_exit(self, icao):
         self.mqtt.publish("space/planes/geozone/exit", json.dumps(self.PTDB[icao]))
-        self.mqtt.disconnect()
         print(self.PTDB[icao]['callsign'], "Exited our airspace")
 
     def handle_cleanup(self, ts):
@@ -62,6 +63,7 @@ class ADSBClient(TcpClient):
 
         if icao not in self.PTDB:
             self.PTDB[icao] = {
+                    "icao": icao,
                     "callsign": "",
                     "alt": 0,
                     "lat":0.0,
@@ -117,8 +119,13 @@ class ADSBClient(TcpClient):
                 self.PTDB[icao]['lon'] = pos[1]
                 self.PTDB[icao]['distance'] = geopy.distance.geodesic(self.qth, pos).km
                 self.PTDB[icao]['bearing'] = self.calculate_initial_compass_bearing(tuple(self.qth), tuple(pos))
-            if (self.PTDB[icao]['distance'] < 50 
-                    #and self.PTDB[icao]['alt'] < 200000
+            if (self.PTDB[icao]['callsign'] != ""
+                    and self.PTDB[icao]['lat'] != 0
+                    and self.PTDB[icao]['lon'] != 0
+                    ):
+                self.handle_plane_update(icao)
+            if (self.PTDB[icao]['distance'] < 5 
+                    and self.PTDB[icao]['alt'] < 20000
                     and self.PTDB[icao]['callsign'] != ""
                     and self.PTDB[icao]['lat'] != 0
                     and self.PTDB[icao]['lon'] != 0
@@ -127,12 +134,12 @@ class ADSBClient(TcpClient):
                     self.PTDB[icao]['airspace'] = 1
                     self.PTDB[icao]['entered'] = time.time()
                     self.localAirspace.append(icao)
-                    self.handle_planet_entry(icao)
+                    self.handle_plane_entry(icao)
             else:
                 if icao in self.localAirspace:
                     self.PTDB[icao]['airspace'] = 0
                     self.PTDB[icao]['entered'] = 0
-                    self.handle_planet_exit(icao)
+                    self.handle_plane_exit(icao)
                     self.localAirspace.remove(icao)
 
     def handle_messages(self, messages):
