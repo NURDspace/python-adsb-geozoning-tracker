@@ -158,5 +158,5 @@ class ADSBClient(TcpClient):
                 self.handle_modes(msg)
         self.handle_cleanup(datetime.now())
 
-client = ADSBClient(host='10.208.42.113', port=30002, rawtype='raw')
+client = ADSBClient(host='localhost', port=30002, rawtype='raw')
 client.run()
