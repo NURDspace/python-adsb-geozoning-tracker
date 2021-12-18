@@ -262,7 +262,7 @@ class mt_adsb():
             if df in (17,18) and pms.crc(msg) == 0:
                 self.handle_adsb(msg, handlerType)
             elif df in (20,21):
-                self.handle_modes(msg, handlerType)
+                self.handle_modes(msg)
             elif df == 11: #Not implemented yet allcall
                 continue
             elif df in (0,16): #No clue what this is
