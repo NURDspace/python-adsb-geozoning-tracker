@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from pyModeS.extra.tcpclient import TcpClient
 
 mqtt_host = ("10.208.11.32",1883)
-adsb_host = ("127.0.0.1", 30002, "raw")
+adsb_host = ("127.0.0.1", 30005, "beast")
 mlat_host = ("127.0.0.1", 30105, "beast")
 airspace_coords = (51.973357353305914, 5.669655084220917)
 
@@ -28,10 +28,12 @@ class ADSBClient(TcpClient):
 
     def handle_messages(self, messages):
         for msg, ts in messages:
-            if len(msg) != 28:  # wrong data length
+            if len(msg) != 28 and len(msg) != 14:  # wrong data length
+                print(len(msg))
                 continue
 
             df = pms.df(msg)
+
             if pms.crc(msg) !=0:  # CRC fail
                 continue
 
@@ -79,6 +81,9 @@ class mt_adsb():
         compass_bearing = (initial_bearing + 360) % 360
         return compass_bearing
 
+    def handle_plane_mlat_update(self, icao: str) -> None:
+        self.mqtt.publish("space/planes/mlat", json.dumps(self.PTDB[icao]))
+
     def handle_plane_update(self, icao: str) -> None:
         self.mqtt.publish("space/planes/update", json.dumps(self.PTDB[icao]))
 
@@ -95,11 +100,28 @@ class mt_adsb():
         self.msgCache = {k:v for k,v in self.msgCache.items() if v['timestamp'] > (ts - timedelta(minutes=3))}
 
     def handle_modes(self, msg):
-        icao = pms.adsb.icao(msg)
-        tc = pms.adsb.typecode(msg)
+        icao = pms.icao(msg)           # Infer the ICAO address from the message
         bds = pms.bds.infer(msg)
+        if icao not in self.PTDB:
+            self.PTDB[icao] = {
+                    "icao": icao,
+                    "callsign": "",
+                    "alt": 0,
+                    "lat":0.0,
+                    "lon":0.0,
+                    "distance":0,
+                    "timestamp":0,
+                    "airspace": 0,
+                    "entered":0,
+                    "distance":0,
+                    "speed":0,
+                    "heading":0,
+                    "source": []
+                    }
         if bds == "BDS20":
             self.PTDB[icao]['callsign'] = pms.commb.cs20(msg).strip("_")
+        if 'Mode-S' not in self.PTDB[icao]['source']:
+            self.PTDB[icao]['source'].append('Mode-S')
 
     def handle_adsb(self, msg: str, handlerType: str) -> None:
         icao = pms.adsb.icao(msg)
@@ -119,7 +141,8 @@ class mt_adsb():
                     "distance":0,
                     "speed":0,
                     "heading":0,
-                    "mode": handlerType
+                    "mode": handlerType,
+                    "source": []
                     }
 
         if icao not in self.msgCache:
@@ -177,26 +200,42 @@ class mt_adsb():
                 self.PTDB[icao]['lon'] = pos[1]
                 self.PTDB[icao]['distance'] = geopy.distance.geodesic(airspace_coords, pos).km
                 self.PTDB[icao]['bearing'] = self.calculate_initial_compass_bearing(tuple(airspace_coords), tuple(pos))
-            if (self.PTDB[icao]['callsign'] != ""
+
+            #Send MLAT
+            if (handlerType == "mlat"
+                    and self.PTDB[icao]['lat'] != 0
+                    and self.PTDB[icao]['lon'] != 0
+                    ):
+                self.handle_plane_mlat_update(icao)
+                if self.PTDB[icao]['callsign'] == "":
+                    self.PTDB[icao]['callsign'] = icao
+                if 'MLAT' not in self.PTDB[icao]['source']:
+                    self.PTDB[icao]['source'].append('MLAT')
+
+            #Send update
+            if (self.PTDB[icao]['callsign'] != ''
                     and self.PTDB[icao]['lat'] != 0
                     and self.PTDB[icao]['lon'] != 0
                     ):
                 self.handle_plane_update(icao)
 
+            #Update source if it was from ADS-B and not mlat
+            if 'ADS-B' not in self.PTDB[icao]['source'] and handlerType != "mlat":
+                self.PTDB[icao]['source'].append('ADS-B')
+
+            #Local airspace stuff
             if (self.PTDB[icao]['distance'] < 5
-                    and self.PTDB[icao]['alt'] < 16000
+                    and self.PTDB[icao]['alt'] < 15000
                     and self.PTDB[icao]['callsign'] != ""
                     and self.PTDB[icao]['lat'] != 0
                     and self.PTDB[icao]['lon'] != 0
                     ):
-
                 if icao not in self.localAirspace:
                     self.PTDB[icao]['airspace'] = 1
                     self.PTDB[icao]['entered'] = time.time()
                     self.localAirspace.append(icao)
                     self.handle_plane_entry(icao)
             else:
-
                 if icao in self.localAirspace:
                     self.PTDB[icao]['airspace'] = 0
                     self.PTDB[icao]['entered'] = 0
@@ -225,8 +264,10 @@ class mt_adsb():
 
             if df in (17,18):
                 self.handle_adsb(msg, handlerType)
-            elif df == 20:
+            elif df in (20,21):
                 self.handle_modes(msg, handlerType)
+            elif df == 11: #Not implemented yet allcall
+                continue
             else:
                 self.log.info(f"DF: {df}")
 
