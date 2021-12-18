@@ -34,9 +34,6 @@ class ADSBClient(TcpClient):
 
             df = pms.df(msg)
 
-            if pms.crc(msg) !=0:  # CRC fail
-                continue
-
             # Put the message, df and type of the listener in the queue
             self.messageQueue.put((msg, df, self.handlerType))
 
@@ -262,11 +259,13 @@ class mt_adsb():
             # Constantly grab new data from the queue
             msg, df, handlerType = self.messageQueue.get()
 
-            if df in (17,18):
+            if df in (17,18) and pms.crc(msg) == 0:
                 self.handle_adsb(msg, handlerType)
             elif df in (20,21):
                 self.handle_modes(msg, handlerType)
             elif df == 11: #Not implemented yet allcall
+                continue
+            elif df in (0,16): #No clue what this is
                 continue
             else:
                 self.log.info(f"DF: {df}")
