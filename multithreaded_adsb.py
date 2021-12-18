@@ -29,7 +29,6 @@ class ADSBClient(TcpClient):
     def handle_messages(self, messages):
         for msg, ts in messages:
             if len(msg) != 28 and len(msg) != 14:  # wrong data length
-                print(len(msg))
                 continue
 
             df = pms.df(msg)
@@ -96,6 +95,30 @@ class mt_adsb():
         self.PTDB = {k:v for k,v in self.PTDB.items() if v['timestamp'] > (time.time() - 180)}
         self.msgCache = {k:v for k,v in self.msgCache.items() if v['timestamp'] > (ts - timedelta(minutes=3))}
 
+    def handle_common(self, msg, df):
+        icao = pms.icao(msg)
+        if icao not in self.PTDB:
+            self.PTDB[icao] = {
+                    "icao": icao,
+                    "callsign": "",
+                    "alt": 0,
+                    "lat":0.0,
+                    "lon":0.0,
+                    "distance":0,
+                    "timestamp":0,
+                    "airspace": 0,
+                    "entered":0,
+                    "distance":0,
+                    "speed":0,
+                    "heading":0,
+                    "squawk": "",
+                    "source": []
+                    }
+        if df in (5,21):
+            self.PTDB[icao]['squawk'] = pms.common.idcode(msg)
+        if df in (4,20):
+            self.PTDB[icao]['altcode'] = pms.common.altcode(msg)
+
     def handle_modes(self, msg):
         icao = pms.icao(msg)           # Infer the ICAO address from the message
         bds = pms.bds.infer(msg)
@@ -113,6 +136,7 @@ class mt_adsb():
                     "distance":0,
                     "speed":0,
                     "heading":0,
+                    "squawk": "",
                     "source": []
                     }
         if bds == "BDS20":
@@ -138,6 +162,7 @@ class mt_adsb():
                     "distance":0,
                     "speed":0,
                     "heading":0,
+                    "squawk": "",
                     "mode": handlerType,
                     "source": []
                     }
@@ -263,6 +288,9 @@ class mt_adsb():
                 self.handle_adsb(msg, handlerType)
             elif df in (20,21):
                 self.handle_modes(msg)
+                self.handle_common(msg, df)
+            elif df in (4,5):
+                self.handle_common(msg, df)
             elif df == 11: #Not implemented yet allcall
                 continue
             elif df in (0,16): #No clue what this is
