@@ -26,6 +26,25 @@ class ADSBClient(TcpClient):
         self.handlerType = handlerType
         super(ADSBClient, self).__init__(host, port, rawtype)
 
+
+    def handle_messages(self, messages):
+        for msg, ts in messages:
+            if len(msg) != 28 and len(msg) != 14:  # wrong data length
+                continue
+            df = pms.df(msg)
+            self.messageQueue.put((msg, df, self.handlerType))
+
+class mt_adsb():
+    log = logging.getLogger("MAIN")
+
+    PTDB = {}
+    msgCache = {}
+    running = False
+    localAirspace = []
+    mqtt = mqtt.Client()
+    lastCleanup = time.time()
+    messageQueue = queue.Queue()
+
     def initPlane(self, icao):
         if icao not in self.PTDB:
             self.PTDB[icao] = {
@@ -44,27 +63,6 @@ class ADSBClient(TcpClient):
                     "squawk": "",
                     "source": []
                     }
-
-    def handle_messages(self, messages):
-        for msg, ts in messages:
-            if len(msg) != 28 and len(msg) != 14:  # wrong data length
-                continue
-
-            df = pms.df(msg)
-
-            # Put the message, df and type of the listener in the queue
-            self.messageQueue.put((msg, df, self.handlerType))
-
-class mt_adsb():
-    log = logging.getLogger("MAIN")
-
-    PTDB = {}
-    msgCache = {}
-    running = False
-    localAirspace = []
-    mqtt = mqtt.Client()
-    lastCleanup = time.time()
-    messageQueue = queue.Queue()
 
     def start(self) -> None:
         self.running = True
