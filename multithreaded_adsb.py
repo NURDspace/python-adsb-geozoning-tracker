@@ -26,6 +26,25 @@ class ADSBClient(TcpClient):
         self.handlerType = handlerType
         super(ADSBClient, self).__init__(host, port, rawtype)
 
+    def initPlane(self, icao):
+        if icao not in self.PTDB:
+            self.PTDB[icao] = {
+                    "icao": icao,
+                    "callsign": "",
+                    "alt": 0,
+                    "lat":0.0,
+                    "lon":0.0,
+                    "distance":0,
+                    "timestamp":0,
+                    "airspace": 0,
+                    "entered":0,
+                    "distance":0,
+                    "speed":0,
+                    "heading":0,
+                    "squawk": "",
+                    "source": []
+                    }
+
     def handle_messages(self, messages):
         for msg, ts in messages:
             if len(msg) != 28 and len(msg) != 14:  # wrong data length
@@ -97,23 +116,12 @@ class mt_adsb():
 
     def handle_common(self, msg, df):
         icao = pms.icao(msg)
-        if icao not in self.PTDB:
-            self.PTDB[icao] = {
-                    "icao": icao,
-                    "callsign": "",
-                    "alt": 0,
-                    "lat":0.0,
-                    "lon":0.0,
-                    "distance":0,
-                    "timestamp":0,
-                    "airspace": 0,
-                    "entered":0,
-                    "distance":0,
-                    "speed":0,
-                    "heading":0,
-                    "squawk": "",
-                    "source": []
-                    }
+        self.initPlane(icao)
+        if df in (4,5,11) and len(msg) != 14:
+            return
+        if df in (20,21) and len(msg) != 28:
+            return
+
         if df in (5,21):
             self.PTDB[icao]['squawk'] = pms.common.idcode(msg)
         if df in (4,20):
@@ -122,23 +130,7 @@ class mt_adsb():
     def handle_modes(self, msg):
         icao = pms.icao(msg)           # Infer the ICAO address from the message
         bds = pms.bds.infer(msg)
-        if icao not in self.PTDB:
-            self.PTDB[icao] = {
-                    "icao": icao,
-                    "callsign": "",
-                    "alt": 0,
-                    "lat":0.0,
-                    "lon":0.0,
-                    "distance":0,
-                    "timestamp":0,
-                    "airspace": 0,
-                    "entered":0,
-                    "distance":0,
-                    "speed":0,
-                    "heading":0,
-                    "squawk": "",
-                    "source": []
-                    }
+        self.initPlane(icao)
         if bds == "BDS20":
             self.PTDB[icao]['callsign'] = pms.commb.cs20(msg).strip("_")
         if 'Mode-S' not in self.PTDB[icao]['source']:
@@ -147,25 +139,7 @@ class mt_adsb():
     def handle_adsb(self, msg: str, handlerType: str) -> None:
         icao = pms.adsb.icao(msg)
         tc = pms.adsb.typecode(msg)
-
-        if icao not in self.PTDB:
-            self.PTDB[icao] = {
-                    "icao": icao,
-                    "callsign": "",
-                    "alt": 0,
-                    "lat":0.0,
-                    "lon":0.0,
-                    "distance":0,
-                    "timestamp":0,
-                    "airspace": 0,
-                    "entered":0,
-                    "distance":0,
-                    "speed":0,
-                    "heading":0,
-                    "squawk": "",
-                    "mode": handlerType,
-                    "source": []
-                    }
+        self.initPlane(icao)
 
         if icao not in self.msgCache:
             self.msgCache[icao] = {
@@ -286,7 +260,7 @@ class mt_adsb():
 
             if df in (17,18) and pms.crc(msg) == 0:
                 self.handle_adsb(msg, handlerType)
-            elif df in (20,21):
+            elif df in (20,21) and len(msg) == 28:
                 self.handle_modes(msg)
                 self.handle_common(msg, df)
             elif df in (4,5):
